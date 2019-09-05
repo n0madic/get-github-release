@@ -142,6 +142,7 @@ func main() {
 	if downloadAll {
 		downloads = latest.Assets
 	} else {
+		var candidate asset
 		for _, asset := range latest.Assets {
 			name := strings.ToLower(asset.Name)
 			// If checksum files are found, try to download them
@@ -175,15 +176,16 @@ func main() {
 			// Filter files by OS and architecture
 			if strings.HasPrefix(asset.ContentType, "application") &&
 				strings.Contains(name, runtime.GOOS) {
-				if runtime.GOARCH == "amd64" && isArch(name, x64arch) {
-					downloads = append(downloads, asset)
-				} else if runtime.GOARCH == "386" && isArch(name, x32arch) {
-					downloads = append(downloads, asset)
+				if (runtime.GOARCH == "amd64" && isArch(name, x64arch)) ||
+					(runtime.GOARCH == "386" && isArch(name, x32arch)) ||
+					candidate.Name == "" {
+					candidate = asset
 				}
 			}
 		}
-
-		if len(downloads) == 0 {
+		if candidate.Name != "" {
+			downloads = append(downloads, candidate)
+		} else {
 			log.Fatal("No downloads found suitable for this system")
 		}
 	}
@@ -232,15 +234,12 @@ func main() {
 			if err != nil {
 				log.Println("problem with unzip file:", err)
 			}
-		case asset.ContentType == "application/octet-stream" ||
-			asset.ContentType == "application/x-msdos-program" ||
-			asset.ContentType == "application/x-msdownload":
+		default:
+			log.Printf("unknow content type: %s, try to just download", asset.ContentType)
 			err = saveFile(dest+"/"+asset.Name, os.FileMode(0755), reader)
 			if err != nil {
 				log.Println("problem with download file:", err)
 			}
-		default:
-			log.Println("unknow content type:", asset.ContentType)
 		}
 
 		if hashReader != nil {
