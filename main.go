@@ -172,6 +172,7 @@ func main() {
 						}
 					}
 				}
+				log.Printf("load checksum from file %s\n", asset.Name)
 				continue
 			}
 			// Filter files by OS and architecture
@@ -192,7 +193,7 @@ func main() {
 	}
 
 	for _, asset := range downloads {
-		log.Printf("download URL: %s (%d MB)\n", asset.BrowserDownloadURL, asset.Size/1024/1024)
+		log.Printf("download URL: %s (%.1f MB)\n", asset.BrowserDownloadURL, float64(asset.Size)/1024/1024)
 		resp, err := http.Get(asset.BrowserDownloadURL)
 		if err != nil {
 			log.Println(err)
@@ -333,6 +334,8 @@ func untar(r io.Reader, ext, dest string) (err error) {
 			return err
 		}
 		defer zr.Close()
+	default:
+		log.Printf("unknown compression type: %s\n", strings.TrimPrefix(ext, "."))
 	}
 
 	tr := tar.NewReader(zr)
@@ -348,13 +351,11 @@ func untar(r io.Reader, ext, dest string) (err error) {
 			continue
 		}
 
-		if !header.FileInfo().IsDir() {
-			if isExecutable(header.FileInfo().Mode()) {
-				log.Printf("unpack %s binary", header.Name)
-				err := saveFile(dest+"/"+filepath.Base(header.Name), header.FileInfo().Mode(), tr)
-				if err != nil {
-					return err
-				}
+		if !header.FileInfo().IsDir() && isExecutable(header.FileInfo().Mode()) {
+			log.Printf("unpack %s binary", header.Name)
+			err := saveFile(dest+"/"+filepath.Base(header.Name), header.FileInfo().Mode(), tr)
+			if err != nil {
+				return err
 			}
 		}
 	}
