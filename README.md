@@ -1,6 +1,6 @@
 # get-github-release
 
-The utility downloads the latest binary release from GitHub
+Utility downloads and unpacks the latest binary release from GitHub
 
 ## Install
 
