@@ -23,13 +23,16 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
+	"time"
 )
+
+const clearLine = "\033[2K\r"
 
 type asset struct {
 	Name               string `json:"name"`
 	BrowserDownloadURL string `json:"browser_download_url"`
 	ContentType        string `json:"content_type"`
-	Size               int    `json:"size"`
+	Size               int64  `json:"size"`
 }
 
 type release struct {
@@ -40,6 +43,38 @@ type release struct {
 type hashFile struct {
 	Hash string
 	Type string
+}
+
+type writeProgress struct {
+	downloaded  int64
+	lastPercent int
+	StartTime   time.Time
+	Total       int64
+}
+
+func (wp *writeProgress) Write(p []byte) (int, error) {
+	n := len(p)
+	wp.downloaded += int64(n)
+	ratio := float64(wp.downloaded) / float64(wp.Total)
+	percent := int(100 * ratio)
+	if percent > wp.lastPercent {
+		total := time.Duration(float64(time.Since(wp.StartTime)) / ratio)
+		var remaining string
+		if percent > 1 {
+			remaining = fmt.Sprintf("%v remaining...",
+				time.Until(wp.StartTime.Add(total)).Round(time.Second),
+			)
+		}
+		fmt.Fprintf(os.Stderr, "%s=> Download %s/%s (%d%%) %s",
+			clearLine,
+			byteHumanize(wp.downloaded),
+			byteHumanize(wp.Total),
+			percent,
+			remaining,
+		)
+	}
+	wp.lastPercent = percent
+	return n, nil
 }
 
 var (
@@ -62,6 +97,8 @@ func init() {
 	flag.BoolVar(&downloadAll, "all", false, "download all assets")
 	flag.StringVar(&outputName, "output", "", "output binary filename")
 	flag.StringVar(&tag, "tag", "latest", "release tag")
+
+	log.SetPrefix(clearLine)
 }
 
 func main() {
@@ -193,7 +230,7 @@ func main() {
 	}
 
 	for _, asset := range downloads {
-		log.Printf("download URL: %s (%.1f MB)\n", asset.BrowserDownloadURL, float64(asset.Size)/1024/1024)
+		log.Printf("download URL: %s (%s)\n", asset.BrowserDownloadURL, byteHumanize(asset.Size))
 		resp, err := http.Get(asset.BrowserDownloadURL)
 		if err != nil {
 			log.Println(err)
@@ -207,7 +244,7 @@ func main() {
 		hashSrc, hashFound := hashMap[asset.Name]
 
 		var reader io.Reader
-		reader = resp.Body
+		reader = io.TeeReader(resp.Body, &writeProgress{StartTime: time.Now(), Total: asset.Size})
 		var hashReader hash.Hash
 		if hashFound {
 			switch hashSrc.Type {
@@ -221,21 +258,21 @@ func main() {
 				log.Printf("unknown hash type: %s\n", hashSrc.Type)
 			}
 			if hashReader != nil {
-				reader = io.TeeReader(resp.Body, hashReader)
+				reader = io.TeeReader(reader, hashReader)
 			}
 		}
 
 		switch {
-		case strings.HasSuffix(asset.ContentType, "bzip2") ||
-			(strings.HasSuffix(asset.Name, "bz2") && !strings.HasSuffix(asset.Name, "tar.bz2")):
+		case (strings.HasSuffix(asset.ContentType, "bzip2") || strings.HasSuffix(asset.Name, ".bz2")) &&
+			!strings.HasSuffix(asset.Name, "tar.bz2"):
 			filename := strings.TrimSuffix(asset.Name, ".bz2")
 			log.Printf("unpack %s binary", filename)
 			err = unbzip2(reader, dest+"/"+filename)
 			if err != nil {
 				log.Println("problem with unpack bzip2 file:", err)
 			}
-		case strings.HasSuffix(asset.ContentType, "gzip") ||
-			(strings.HasSuffix(asset.Name, ".gz") && !strings.HasSuffix(asset.Name, "tar.gz")):
+		case (strings.HasSuffix(asset.ContentType, "gzip") || strings.HasSuffix(asset.Name, ".gz")) &&
+			!strings.HasSuffix(asset.Name, "tar.gz"):
 			filename := strings.TrimSuffix(asset.Name, ".gz")
 			log.Printf("unpack %s binary", filename)
 			err = ungzip(reader, dest+"/"+filename)
@@ -271,9 +308,22 @@ func main() {
 			}
 			log.Println(checkResult)
 		}
-
 	}
 
+	fmt.Fprintf(os.Stderr, clearLine)
+}
+
+func byteHumanize(b int64) string {
+	const unit = 1024
+	if b < unit {
+		return fmt.Sprintf("%d B", b)
+	}
+	div, exp := int64(unit), 0
+	for n := b / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %ciB", float64(b)/float64(div), "KMGTPE"[exp])
 }
 
 func getURLContent(url string) (string, error) {
