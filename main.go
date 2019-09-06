@@ -228,15 +228,22 @@ func main() {
 		switch {
 		case strings.HasSuffix(asset.ContentType, "bzip2") ||
 			(strings.HasSuffix(asset.Name, "bz2") && !strings.HasSuffix(asset.Name, "tar.bz2")):
-			bzip2 := bzip2.NewReader(reader)
 			filename := strings.TrimSuffix(asset.Name, ".bz2")
 			log.Printf("unpack %s binary", filename)
-			filename = checkFilename(filename)
-			err = saveFile(dest+"/"+filename, os.FileMode(0755), bzip2)
+			err = unbzip2(reader, dest+"/"+filename)
 			if err != nil {
 				log.Println("problem with unpack bzip2 file:", err)
 			}
-		case strings.HasSuffix(asset.ContentType, "gzip") || strings.HasSuffix(asset.Name, "gz") ||
+		case strings.HasSuffix(asset.ContentType, "gzip") ||
+			(strings.HasSuffix(asset.Name, ".gz") && !strings.HasSuffix(asset.Name, "tar.gz")):
+			filename := strings.TrimSuffix(asset.Name, ".gz")
+			log.Printf("unpack %s binary", filename)
+			err = ungzip(reader, dest+"/"+filename)
+			if err != nil {
+				log.Println("problem with unpack gzip file:", err)
+			}
+
+		case strings.HasSuffix(asset.Name, "tgz") || strings.HasSuffix(asset.Name, "tar.gz") ||
 			strings.HasSuffix(asset.Name, "tar.bz2"):
 			err = untar(reader, filepath.Ext(asset.Name), dest)
 			if err != nil {
@@ -301,26 +308,23 @@ func isExecutable(m os.FileMode) bool {
 	return m&(1<<6) != 0
 }
 
-// cutFilename crop the file name to the first part
-func cutFilename(name string) string {
-	parts := strings.FieldsFunc(name, func(r rune) bool {
-		return r == '-' || r == '_' || r == ' '
-	})
-	ext := filepath.Ext(name)
-	name = parts[0]
-	if !strings.HasSuffix(name, ".exe") && strings.ToLower(ext) == ".exe" {
-		name += ".exe"
-	}
-	return name
+func unbzip2(r io.Reader, dest string) error {
+	return saveFile(dest, os.FileMode(0755), bzip2.NewReader(r))
 }
 
-func checkFilename(name string) string {
-	if outputName != "" {
-		name = filepath.Dir(name) + "/" + outputName
-	} else if cutName {
-		name = cutFilename(name)
+func ungzip(r io.Reader, dest string) error {
+	gzr, err := gzip.NewReader(r)
+	if err != nil {
+		return err
 	}
-	return name
+	defer gzr.Close()
+
+	err = saveFile(dest, os.FileMode(0755), gzr)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func untar(r io.Reader, ext, dest string) (err error) {
@@ -396,7 +400,23 @@ func unzip(r io.Reader, dest string) error {
 }
 
 func saveFile(destFile string, mode os.FileMode, r io.Reader) error {
-	destFile = checkFilename(destFile)
+	if outputName != "" {
+		destFile = filepath.Dir(destFile) + "/" + outputName
+		log.Println("> save as", outputName)
+	} else if cutName {
+		// cropping the file name to the first part
+		name := filepath.Base(destFile)
+		parts := strings.FieldsFunc(name, func(r rune) bool {
+			return r == '-' || r == '_' || r == ' '
+		})
+		ext := filepath.Ext(name)
+		name = parts[0]
+		if !strings.HasSuffix(name, ".exe") && strings.ToLower(ext) == ".exe" {
+			name += ".exe"
+		}
+		log.Println("> save as", name)
+		destFile = filepath.Dir(destFile) + "/" + name
+	}
 
 	f, err := os.OpenFile(destFile, os.O_CREATE|os.O_RDWR, os.FileMode(mode))
 	if err != nil {
