@@ -243,8 +243,7 @@ func main() {
 
 		hashSrc, hashFound := hashMap[asset.Name]
 
-		var reader io.Reader
-		reader = io.TeeReader(resp.Body, &writeProgress{StartTime: time.Now(), Total: asset.Size})
+		reader := io.TeeReader(resp.Body, &writeProgress{StartTime: time.Now(), Total: asset.Size})
 		var hashReader hash.Hash
 		if hashFound {
 			switch hashSrc.Type {
