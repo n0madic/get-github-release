@@ -128,7 +128,7 @@ func main() {
 	if !stat.IsDir() {
 		log.Fatalf("output path %s is not directory", dest)
 	}
-	strings.TrimRight(dest, "/")
+	dest = strings.TrimRight(dest, "/")
 
 	parts := strings.Split(strings.TrimPrefix(flag.Args()[0], "https://github.com/"), "/")
 	if len(parts) < 2 {
@@ -310,7 +310,7 @@ func main() {
 		}
 	}
 
-	fmt.Fprintf(os.Stderr, clearLine)
+	fmt.Fprintf(os.Stderr, "%s", clearLine)
 }
 
 func byteHumanize(b int64) string {
