@@ -1,9 +1,5 @@
 name: Go
-on:
-  push:
-    branches:
-    - master
-    - release/*jobs:
+on: push
 
 jobs:
   build:
@@ -12,7 +8,7 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
-    
+
     steps:
 
     - name: Set up Go 1.12
