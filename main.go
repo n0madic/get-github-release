@@ -26,8 +26,6 @@ import (
 	"time"
 )
 
-const clearLine = "\033[2K\r"
-
 type asset struct {
 	Name               string `json:"name"`
 	BrowserDownloadURL string `json:"browser_download_url"`
@@ -86,9 +84,10 @@ var (
 )
 
 var (
-	hashMap = make(map[string]hashFile)
-	x32arch = []string{"386", "x32"}
-	x64arch = []string{"amd64", "x64", "x86_64"}
+	clearLine = "\033[2K\r"
+	hashMap   = make(map[string]hashFile)
+	x32arch   = []string{"386", "x32"}
+	x64arch   = []string{"amd64", "x64", "x86_64"}
 )
 
 func init() {
@@ -98,6 +97,9 @@ func init() {
 	flag.StringVar(&outputName, "output", "", "output binary filename")
 	flag.StringVar(&tag, "tag", "latest", "release tag")
 
+	if runtime.GOOS == "windows" {
+		clearLine = "\r"
+	}
 	log.SetPrefix(clearLine)
 }
 
