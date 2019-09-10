@@ -128,7 +128,6 @@ func main() {
 	if !stat.IsDir() {
 		log.Fatalf("output path %s is not directory", dest)
 	}
-	dest = strings.TrimRight(dest, "/")
 
 	parts := strings.Split(strings.TrimPrefix(flag.Args()[0], "https://github.com/"), "/")
 	if len(parts) < 2 {
@@ -266,7 +265,7 @@ func main() {
 			!strings.HasSuffix(asset.Name, "tar.bz2"):
 			filename := strings.TrimSuffix(asset.Name, ".bz2")
 			log.Printf("unpack %s binary", filename)
-			err = unbzip2(reader, dest+"/"+filename)
+			err = unbzip2(reader, filepath.Join(dest, filename))
 			if err != nil {
 				log.Println("problem with unpack bzip2 file:", err)
 			}
@@ -274,7 +273,7 @@ func main() {
 			!strings.HasSuffix(asset.Name, "tar.gz"):
 			filename := strings.TrimSuffix(asset.Name, ".gz")
 			log.Printf("unpack %s binary", filename)
-			err = ungzip(reader, dest+"/"+filename)
+			err = ungzip(reader, filepath.Join(dest, filename))
 			if err != nil {
 				log.Println("problem with unpack gzip file:", err)
 			}
@@ -292,7 +291,7 @@ func main() {
 			}
 		default:
 			log.Printf("unknow content type: %s, try to just download", asset.ContentType)
-			err = saveFile(dest+"/"+asset.Name, os.FileMode(0755), reader)
+			err = saveFile(filepath.Join(dest, asset.Name), os.FileMode(0755), reader)
 			if err != nil {
 				log.Println("problem with download file:", err)
 			}
@@ -406,7 +405,7 @@ func untar(r io.Reader, ext, dest string) (err error) {
 
 		if !header.FileInfo().IsDir() && isExecutable(header.FileInfo().Mode()) {
 			log.Printf("unpack %s binary", header.Name)
-			err := saveFile(dest+"/"+filepath.Base(header.Name), header.FileInfo().Mode(), tr)
+			err := saveFile(filepath.Join(dest, filepath.Base(header.Name)), header.FileInfo().Mode(), tr)
 			if err != nil {
 				return err
 			}
@@ -438,7 +437,7 @@ func unzip(r io.Reader, dest string) error {
 			}
 			defer src.Close()
 
-			err = saveFile(dest+"/"+filepath.Base(zf.Name), os.FileMode(zf.Mode()), src)
+			err = saveFile(filepath.Join(dest, filepath.Base(zf.Name)), os.FileMode(zf.Mode()), src)
 			if err != nil {
 				return err
 			}
@@ -450,7 +449,7 @@ func unzip(r io.Reader, dest string) error {
 
 func saveFile(destFile string, mode os.FileMode, r io.Reader) error {
 	if outputName != "" {
-		destFile = filepath.Dir(destFile) + "/" + outputName
+		destFile = filepath.Join(filepath.Dir(destFile), outputName)
 		log.Println("> save as", outputName)
 	} else if cutName {
 		// cropping the file name to the first part
@@ -464,7 +463,7 @@ func saveFile(destFile string, mode os.FileMode, r io.Reader) error {
 			name += ".exe"
 		}
 		log.Println("> save as", name)
-		destFile = filepath.Dir(destFile) + "/" + name
+		destFile = filepath.Join(filepath.Dir(destFile), name)
 	}
 
 	f, err := os.OpenFile(destFile, os.O_CREATE|os.O_RDWR, os.FileMode(mode))
