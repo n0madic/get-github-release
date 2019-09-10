@@ -7,6 +7,7 @@ import (
 	"compress/bzip2"
 	"compress/gzip"
 	"crypto/md5"
+	"crypto/sha1"
 	"crypto/sha256"
 	"crypto/sha512"
 	"encoding/hex"
@@ -84,6 +85,7 @@ var (
 )
 
 var (
+	checksums = []string{"checksum", "md5", "sha1", "sha256", "sha512"}
 	clearLine = "\033[2K\r"
 	hashMap   = make(map[string]hashFile)
 	x32arch   = []string{"386", "x32"}
@@ -159,6 +161,11 @@ func main() {
 		log.Fatal(err)
 	}
 
+	if resp.StatusCode != http.StatusOK {
+		response, _ := ioutil.ReadAll(resp.Body)
+		log.Fatalf("API request error: %s: %s", resp.Status, string(response))
+	}
+
 	var latest release
 	if allowPreRelease {
 		// Download the whole list of releases and take the first
@@ -185,23 +192,42 @@ func main() {
 		for _, asset := range latest.Assets {
 			name := strings.ToLower(asset.Name)
 			// If checksum files are found, try to download them
-			if strings.Contains(name, "checksum") || strings.HasSuffix(name, ".md5") || strings.HasSuffix(name, ".sha256") {
+			if stringInSlice(name, checksums) {
 				content, err := getURLContent(asset.BrowserDownloadURL)
 				if err != nil {
 					log.Printf("error getting file contents: %s\n", err)
 				}
-				// Trying to determine the type of hashing by file extension
-				hashType := strings.ToLower(strings.TrimLeft(filepath.Ext(name), "."))
+				var hashType string
+				switch {
+				case strings.Contains(name, "md5"):
+					hashType = "md5"
+				case strings.Contains(name, "sha1"):
+					hashType = "sha1"
+				case strings.Contains(name, "sha256"):
+					hashType = "sha256"
+				case strings.Contains(name, "sha512"):
+					hashType = "sha512"
+				default:
+					// Trying to determine the type of hashing by file extension
+					hashType = strings.ToLower(strings.TrimLeft(filepath.Ext(name), "."))
+				}
 				// Scan lines with hashes
+				var foundHash bool
 				for _, line := range strings.Split(content, "\n") {
 					parts := regexp.MustCompile(`\s+`).Split(line, -1)
 					if len(parts) == 2 {
+						foundHash = true
 						// if the type of the hash is unknown then try to guess it by the length of the hash
 						if hashType != "md5" || !strings.HasPrefix(hashType, "sha") {
-							if len(parts[0]) == 32 {
+							switch len(parts[0]) {
+							case 20:
+								hashType = "sha1"
+							case 32:
 								hashType = "md5"
-							} else if len(parts[0]) == 64 {
+							case 64:
 								hashType = "sha256"
+							case 128:
+								hashType = "sha512"
 							}
 						}
 						hashMap[filepath.Base(parts[1])] = hashFile{
@@ -210,14 +236,16 @@ func main() {
 						}
 					}
 				}
-				log.Printf("load checksum from file %s\n", asset.Name)
+				if foundHash {
+					log.Printf("load checksum from file %s\n", asset.Name)
+				}
 				continue
 			}
 			// Filter files by OS and architecture
 			if strings.HasPrefix(asset.ContentType, "application") &&
 				strings.Contains(name, runtime.GOOS) {
-				if (runtime.GOARCH == "amd64" && isArch(name, x64arch)) ||
-					(runtime.GOARCH == "386" && isArch(name, x32arch)) ||
+				if (runtime.GOARCH == "amd64" && stringInSlice(name, x64arch)) ||
+					(runtime.GOARCH == "386" && stringInSlice(name, x32arch)) ||
 					candidate.Name == "" {
 					candidate = asset
 				}
@@ -250,6 +278,8 @@ func main() {
 			switch hashSrc.Type {
 			case "md5":
 				hashReader = md5.New()
+			case "sha1":
+				hashReader = sha1.New()
 			case "sha256":
 				hashReader = sha256.New()
 			case "sha512":
@@ -345,7 +375,7 @@ func getURLContent(url string) (string, error) {
 	return string(b), nil
 }
 
-func isArch(s string, a []string) bool {
+func stringInSlice(s string, a []string) bool {
 	for _, arch := range a {
 		if strings.Contains(s, arch) {
 			return true
