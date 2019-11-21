@@ -409,17 +409,18 @@ func ungzip(r io.Reader, dest string) error {
 
 func untar(r io.Reader, ext, dest string) (err error) {
 	var zr io.ReadCloser
-	switch strings.ToLower(ext) {
-	case ".bz2":
+	extention := strings.TrimPrefix(strings.ToLower(ext), ".")
+	switch {
+	case extention == "bz2":
 		zr = ioutil.NopCloser(bzip2.NewReader(r))
-	case ".gz":
+	case extention == "gz" || extention == "tgz":
 		zr, err = gzip.NewReader(r)
 		if err != nil {
 			return err
 		}
 		defer zr.Close()
 	default:
-		log.Printf("unknown compression type: %s\n", strings.TrimPrefix(ext, "."))
+		return fmt.Errorf("unknown compression type: %s", extention)
 	}
 
 	tr := tar.NewReader(zr)
