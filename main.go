@@ -246,6 +246,7 @@ func main() {
 				strings.Contains(name, runtime.GOOS) {
 				if (runtime.GOARCH == "amd64" && stringInSlice(name, x64arch)) ||
 					(runtime.GOARCH == "386" && stringInSlice(name, x32arch)) ||
+					(runtime.GOARCH == "arm64" && strings.Contains(name, "arm64")) ||
 					candidate.Name == "" {
 					candidate = asset
 				}
