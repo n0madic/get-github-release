@@ -13,14 +13,20 @@ From source:
 ```shell
 Usage:
  get-github-release [-flags] <GitHub repo URL> [output path]
+
+Flags:
   -all
-        download all assets
+    	download all assets
+  -arch string
+    	preferred CPU architecture (default "arm64")
   -cut
-        cut binary filename
+    	cut binary filename
+  -os string
+    	preferred OS name (default "darwin")
   -output string
-        output binary filename
+    	output binary filename
   -pre
-        allow pre-release download
+    	allow pre-release download
   -tag string
-        release tag (default "latest")
+    	release tag (default "latest")
 ```
