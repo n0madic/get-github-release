@@ -80,6 +80,8 @@ var (
 	allowPreRelease bool
 	cutName         bool
 	downloadAll     bool
+	arch            string
+	osName          string
 	outputName      string
 	tag             string
 )
@@ -96,6 +98,8 @@ func init() {
 	flag.BoolVar(&allowPreRelease, "pre", false, "allow pre-release download")
 	flag.BoolVar(&cutName, "cut", false, "cut binary filename")
 	flag.BoolVar(&downloadAll, "all", false, "download all assets")
+	flag.StringVar(&arch, "arch", runtime.GOARCH, "preferred CPU architecture")
+	flag.StringVar(&osName, "os", runtime.GOOS, "preferred OS name")
 	flag.StringVar(&outputName, "output", "", "output binary filename")
 	flag.StringVar(&tag, "tag", "latest", "release tag")
 
@@ -243,10 +247,10 @@ func main() {
 			}
 			// Filter files by OS and architecture
 			if strings.HasPrefix(asset.ContentType, "application") &&
-				strings.Contains(name, runtime.GOOS) {
-				if (runtime.GOARCH == "amd64" && stringInSlice(name, x64arch)) ||
-					(runtime.GOARCH == "386" && stringInSlice(name, x32arch)) ||
-					(runtime.GOARCH == "arm64" && strings.Contains(name, "arm64")) ||
+				strings.Contains(name, osName) {
+				if (arch == "amd64" && stringInSlice(name, x64arch)) ||
+					(arch == "386" && stringInSlice(name, x32arch)) ||
+					(arch == "arm64" && strings.Contains(name, "arm64")) ||
 					candidate.Name == "" {
 					candidate = asset
 				}
