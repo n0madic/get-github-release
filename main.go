@@ -247,7 +247,7 @@ func main() {
 			}
 			// Filter files by OS and architecture
 			if strings.HasPrefix(asset.ContentType, "application") &&
-				strings.Contains(name, osName) {
+				strings.Contains(name, strings.ToLower(osName)) {
 				if (arch == "amd64" && stringInSlice(name, x64arch)) ||
 					(arch == "386" && stringInSlice(name, x32arch)) ||
 					(arch == "arm64" && strings.Contains(name, "arm64")) ||
