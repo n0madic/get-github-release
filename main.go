@@ -16,7 +16,6 @@ import (
 	"fmt"
 	"hash"
 	"io"
-	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
@@ -90,6 +89,7 @@ var (
 	checksums = []string{"checksum", "md5", "sha1", "sha256", "sha512"}
 	clearLine = "\033[2K\r"
 	hashMap   = make(map[string]hashFile)
+	macName   = []string{"darwin", "macos"}
 	x32arch   = []string{"386", "x32"}
 	x64arch   = []string{"amd64", "x64", "x86_64"}
 )
@@ -166,7 +166,7 @@ func main() {
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		response, _ := ioutil.ReadAll(resp.Body)
+		response, _ := io.ReadAll(resp.Body)
 		log.Fatalf("API request error: %s: %s", resp.Status, string(response))
 	}
 
@@ -247,7 +247,8 @@ func main() {
 			}
 			// Filter files by OS and architecture
 			if strings.HasPrefix(asset.ContentType, "application") &&
-				strings.Contains(name, strings.ToLower(osName)) {
+				(strings.Contains(name, strings.ToLower(osName)) ||
+					osName == "darwin" && stringInSlice(name, macName)) {
 				if (arch == "amd64" && stringInSlice(name, x64arch)) ||
 					(arch == "386" && stringInSlice(name, x32arch)) ||
 					(arch == "arm64" && strings.Contains(name, "arm64")) ||
@@ -372,7 +373,7 @@ func getURLContent(url string) (string, error) {
 		return "", fmt.Errorf("bad status: %s", resp.Status)
 	}
 
-	b, err := ioutil.ReadAll(resp.Body)
+	b, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return "", err
 	}
@@ -381,8 +382,9 @@ func getURLContent(url string) (string, error) {
 }
 
 func stringInSlice(s string, a []string) bool {
-	for _, arch := range a {
-		if strings.Contains(s, arch) {
+	s = strings.ToLower(s)
+	for _, str := range a {
+		if strings.Contains(s, strings.ToLower(str)) {
 			return true
 		}
 	}
@@ -417,7 +419,7 @@ func untar(r io.Reader, ext, dest string) (err error) {
 	extention := strings.TrimPrefix(strings.ToLower(ext), ".")
 	switch {
 	case extention == "bz2":
-		zr = ioutil.NopCloser(bzip2.NewReader(r))
+		zr = io.NopCloser(bzip2.NewReader(r))
 	case extention == "gz" || extention == "tgz":
 		zr, err = gzip.NewReader(r)
 		if err != nil {
