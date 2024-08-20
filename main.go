@@ -46,27 +46,24 @@ type hashFile struct {
 type writeProgress struct {
 	downloaded  int64
 	lastPercent int
-	StartTime   time.Time
-	Total       int64
+	startTime   time.Time
+	total       int64
 }
 
 func (wp *writeProgress) Write(p []byte) (int, error) {
 	n := len(p)
 	wp.downloaded += int64(n)
-	ratio := float64(wp.downloaded) / float64(wp.Total)
-	percent := int(100 * ratio)
+	percent := int(100 * float64(wp.downloaded) / float64(wp.total))
 	if percent > wp.lastPercent {
-		total := time.Duration(float64(time.Since(wp.StartTime)) / ratio)
+		total := time.Duration(float64(time.Since(wp.startTime)) / (float64(wp.downloaded) / float64(wp.total)))
 		var remaining string
 		if percent > 1 {
-			remaining = fmt.Sprintf("%v remaining...",
-				time.Until(wp.StartTime.Add(total)).Round(time.Second),
-			)
+			remaining = fmt.Sprintf("%v remaining...", time.Until(wp.startTime.Add(total)).Round(time.Second))
 		}
 		fmt.Fprintf(os.Stderr, "%s=> Download %s/%s (%d%%) %s",
 			clearLine,
 			byteHumanize(wp.downloaded),
-			byteHumanize(wp.Total),
+			byteHumanize(wp.total),
 			percent,
 			remaining,
 		)
@@ -83,15 +80,12 @@ var (
 	osName          string
 	outputName      string
 	tag             string
-)
-
-var (
-	checksums = []string{"checksum", "md5", "sha1", "sha256", "sha512"}
-	clearLine = "\033[2K\r"
-	hashMap   = make(map[string]hashFile)
-	macName   = []string{"darwin", "macos"}
-	x32arch   = []string{"386", "x32"}
-	x64arch   = []string{"amd64", "x64", "x86_64"}
+	checksums       = []string{"checksum", "md5", "sha1", "sha256", "sha512"}
+	clearLine       = "\033[2K\r"
+	hashMap         = make(map[string]hashFile)
+	macName         = []string{"darwin", "macos"}
+	x32arch         = []string{"386", "x32"}
+	x64arch         = []string{"amd64", "x64", "x86_64"}
 )
 
 func init() {
@@ -118,7 +112,6 @@ func main() {
 	}
 	flag.Parse()
 
-	// If no link to the repository is specified
 	if flag.NArg() < 1 {
 		flag.Usage()
 		os.Exit(1)
@@ -129,54 +122,87 @@ func main() {
 		dest = flag.Args()[1]
 	}
 
-	stat, err := os.Stat(dest)
-	if err != nil {
-		log.Fatal("output path error:", err)
-	}
-	if !stat.IsDir() {
-		log.Fatalf("output path %s is not directory", dest)
+	if err := validateOutputPath(dest); err != nil {
+		log.Fatal(err)
 	}
 
-	parts := strings.Split(strings.TrimPrefix(flag.Args()[0], "https://github.com/"), "/")
-	if len(parts) < 2 {
-		log.Fatal("require valid GitHub repo URL")
-	}
-	owner := parts[0]
-	project := parts[1]
-
-	repoURL := fmt.Sprintf("https://api.github.com/repos/%s/%s/releases/latest", owner, project)
-
-	// If there is a link to a tagged release
-	if len(parts) == 5 && parts[3] == "tag" {
-		tag = parts[4]
-	}
-	if tag != "latest" {
-		repoURL = fmt.Sprintf("https://api.github.com/repos/%s/%s/releases/tags/%s", owner, project, tag)
-	}
-
-	// If there is a link to a pre-release
-	if allowPreRelease {
-		repoURL = fmt.Sprintf("https://api.github.com/repos/%s/%s/releases", owner, project)
-	}
-
-	// GitHub API request
-	resp, err := http.Get(repoURL)
+	owner, project, err := parseRepoURL(flag.Args()[0])
 	if err != nil {
 		log.Fatal(err)
 	}
 
+	repoURL := buildRepoURL(owner, project)
+
+	latest, err := getLatestRelease(repoURL)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	downloads := selectDownloads(latest)
+
+	for _, asset := range downloads {
+		if err := downloadAndProcessAsset(asset, dest); err != nil {
+			log.Printf("Error processing asset %s: %v\n", asset.Name, err)
+		}
+	}
+
+	fmt.Fprintf(os.Stderr, "%s", clearLine)
+}
+
+func validateOutputPath(dest string) error {
+	stat, err := os.Stat(dest)
+	if err != nil {
+		return fmt.Errorf("output path error: %w", err)
+	}
+	if !stat.IsDir() {
+		return fmt.Errorf("output path %s is not directory", dest)
+	}
+	return nil
+}
+
+func parseRepoURL(url string) (owner, project string, err error) {
+	parts := strings.Split(strings.TrimPrefix(url, "https://github.com/"), "/")
+	if len(parts) < 2 {
+		return "", "", fmt.Errorf("require valid GitHub repo URL")
+	}
+	owner = parts[0]
+	project = parts[1]
+
+	if len(parts) == 5 && parts[3] == "tag" {
+		tag = parts[4]
+	}
+
+	return owner, project, nil
+}
+
+func buildRepoURL(owner, project string) string {
+	if allowPreRelease {
+		return fmt.Sprintf("https://api.github.com/repos/%s/%s/releases", owner, project)
+	}
+	if tag != "latest" {
+		return fmt.Sprintf("https://api.github.com/repos/%s/%s/releases/tags/%s", owner, project, tag)
+	}
+	return fmt.Sprintf("https://api.github.com/repos/%s/%s/releases/latest", owner, project)
+}
+
+func getLatestRelease(repoURL string) (release, error) {
+	resp, err := http.Get(repoURL)
+	if err != nil {
+		return release{}, err
+	}
+	defer resp.Body.Close()
+
 	if resp.StatusCode != http.StatusOK {
 		response, _ := io.ReadAll(resp.Body)
-		log.Fatalf("API request error: %s: %s", resp.Status, string(response))
+		return release{}, fmt.Errorf("API request error: %s: %s", resp.Status, string(response))
 	}
 
 	var latest release
 	if allowPreRelease {
-		// Download the whole list of releases and take the first
 		var releaseList []release
 		err = json.NewDecoder(resp.Body).Decode(&releaseList)
 		if err != nil {
-			log.Fatal(err)
+			return release{}, err
 		}
 		if len(releaseList) > 0 {
 			latest = releaseList[0]
@@ -184,169 +210,186 @@ func main() {
 	} else {
 		err = json.NewDecoder(resp.Body).Decode(&latest)
 		if err != nil {
-			log.Fatal(err)
+			return release{}, err
 		}
 	}
 
-	var downloads []asset
+	return latest, nil
+}
+
+func selectDownloads(latest release) []asset {
 	if downloadAll {
-		downloads = latest.Assets
-	} else {
-		var candidate asset
-		for _, asset := range latest.Assets {
-			name := strings.ToLower(asset.Name)
-			// If checksum files are found, try to download them
-			if stringInSlice(name, checksums) {
-				content, err := getURLContent(asset.BrowserDownloadURL)
-				if err != nil {
-					log.Printf("error getting file contents: %s\n", err)
-				}
-				var hashType string
-				switch {
-				case strings.Contains(name, "md5"):
-					hashType = "md5"
-				case strings.Contains(name, "sha1"):
-					hashType = "sha1"
-				case strings.Contains(name, "sha256"):
-					hashType = "sha256"
-				case strings.Contains(name, "sha512"):
-					hashType = "sha512"
-				default:
-					// Trying to determine the type of hashing by file extension
-					hashType = strings.ToLower(strings.TrimLeft(filepath.Ext(name), "."))
-				}
-				// Scan lines with hashes
-				var foundHash bool
-				for _, line := range strings.Split(content, "\n") {
-					parts := regexp.MustCompile(`\s+`).Split(line, -1)
-					if len(parts) == 2 {
-						foundHash = true
-						// if the type of the hash is unknown then try to guess it by the length of the hash
-						if hashType != "md5" || !strings.HasPrefix(hashType, "sha") {
-							switch len(parts[0]) {
-							case 20:
-								hashType = "sha1"
-							case 32:
-								hashType = "md5"
-							case 64:
-								hashType = "sha256"
-							case 128:
-								hashType = "sha512"
-							}
-						}
-						hashMap[filepath.Base(parts[1])] = hashFile{
-							Hash: parts[0],
-							Type: hashType,
-						}
-					}
-				}
-				if foundHash {
-					log.Printf("load checksum from file %s\n", asset.Name)
-				}
-				continue
-			}
-			// Filter files by OS and architecture
-			if strings.HasPrefix(asset.ContentType, "application") &&
-				(strings.Contains(name, strings.ToLower(osName)) ||
-					osName == "darwin" && stringInSlice(name, macName)) {
-				if (arch == "amd64" && stringInSlice(name, x64arch)) ||
-					(arch == "386" && stringInSlice(name, x32arch)) ||
-					(arch == "arm64" && strings.Contains(name, "arm64")) ||
-					candidate.Name == "" {
-					candidate = asset
-				}
-			}
+		return latest.Assets
+	}
+
+	var candidate asset
+	for _, asset := range latest.Assets {
+		name := strings.ToLower(asset.Name)
+		if stringInSlice(name, checksums) {
+			processChecksumFile(asset)
+			continue
 		}
-		if candidate.Name != "" {
-			downloads = append(downloads, candidate)
-		} else {
-			log.Fatal("No downloads found suitable for this system")
+		if isAssetSuitableForSystem(asset, name) {
+			candidate = asset
 		}
 	}
 
-	for _, asset := range downloads {
-		log.Printf("download URL: %s (%s)\n", asset.BrowserDownloadURL, byteHumanize(asset.Size))
-		resp, err := http.Get(asset.BrowserDownloadURL)
-		if err != nil {
-			log.Println(err)
-		}
-		defer resp.Body.Close()
+	if candidate.Name != "" {
+		return []asset{candidate}
+	}
+	log.Fatal("No downloads found suitable for this system")
+	return nil
+}
 
-		if resp.StatusCode != http.StatusOK {
-			log.Printf("bad status: %s\n", resp.Status)
-		}
+func processChecksumFile(asset asset) {
+	content, err := getURLContent(asset.BrowserDownloadURL)
+	if err != nil {
+		log.Printf("error getting file contents: %s\n", err)
+		return
+	}
 
-		hashSrc, hashFound := hashMap[asset.Name]
+	hashType := determineHashType(asset.Name)
+	foundHash := parseChecksumFile(content, hashType)
 
-		reader := io.TeeReader(resp.Body, &writeProgress{StartTime: time.Now(), Total: asset.Size})
-		var hashReader hash.Hash
-		if hashFound {
-			switch hashSrc.Type {
-			case "md5":
-				hashReader = md5.New()
-			case "sha1":
-				hashReader = sha1.New()
-			case "sha256":
-				hashReader = sha256.New()
-			case "sha512":
-				hashReader = sha512.New()
-			default:
-				log.Printf("unknown hash type: %s\n", hashSrc.Type)
-			}
-			if hashReader != nil {
-				reader = io.TeeReader(reader, hashReader)
-			}
-		}
+	if foundHash {
+		log.Printf("load checksum from file %s\n", asset.Name)
+	}
+}
 
-		switch {
-		case (strings.HasSuffix(asset.ContentType, "bzip2") || strings.HasSuffix(asset.Name, ".bz2")) &&
-			!strings.HasSuffix(asset.Name, "tar.bz2"):
-			filename := strings.TrimSuffix(asset.Name, ".bz2")
-			log.Printf("unpack %s binary", filename)
-			err = unbzip2(reader, filepath.Join(dest, filename))
-			if err != nil {
-				log.Println("problem with unpack bzip2 file:", err)
-			}
-		case (strings.HasSuffix(asset.ContentType, "gzip") || strings.HasSuffix(asset.Name, ".gz")) &&
-			!strings.HasSuffix(asset.Name, "tar.gz"):
-			filename := strings.TrimSuffix(asset.Name, ".gz")
-			log.Printf("unpack %s binary", filename)
-			err = ungzip(reader, filepath.Join(dest, filename))
-			if err != nil {
-				log.Println("problem with unpack gzip file:", err)
-			}
+func determineHashType(name string) string {
+	switch {
+	case strings.Contains(name, "md5"):
+		return "md5"
+	case strings.Contains(name, "sha1"):
+		return "sha1"
+	case strings.Contains(name, "sha256"):
+		return "sha256"
+	case strings.Contains(name, "sha512"):
+		return "sha512"
+	default:
+		return strings.ToLower(strings.TrimLeft(filepath.Ext(name), "."))
+	}
+}
 
-		case strings.HasSuffix(asset.Name, "tgz") || strings.HasSuffix(asset.Name, "tar.gz") ||
-			strings.HasSuffix(asset.Name, "tar.bz2"):
-			err = untar(reader, filepath.Ext(asset.Name), dest)
-			if err != nil {
-				log.Println("problem with untar file:", err)
+func parseChecksumFile(content, hashType string) bool {
+	foundHash := false
+	for _, line := range strings.Split(content, "\n") {
+		parts := regexp.MustCompile(`\s+`).Split(line, -1)
+		if len(parts) == 2 {
+			foundHash = true
+			if hashType != "md5" && !strings.HasPrefix(hashType, "sha") {
+				hashType = guessHashType(parts[0])
 			}
-		case strings.HasSuffix(asset.ContentType, "zip") || strings.HasSuffix(asset.Name, "zip"):
-			err = unzip(reader, dest)
-			if err != nil {
-				log.Println("problem with unzip file:", err)
-			}
-		default:
-			log.Printf("unknow content type: %s, try to just download", asset.ContentType)
-			err = saveFile(filepath.Join(dest, asset.Name), os.FileMode(0755), reader)
-			if err != nil {
-				log.Println("problem with download file:", err)
+			hashMap[filepath.Base(parts[1])] = hashFile{
+				Hash: parts[0],
+				Type: hashType,
 			}
 		}
+	}
+	return foundHash
+}
 
+func guessHashType(hash string) string {
+	switch len(hash) {
+	case 32:
+		return "md5"
+	case 40:
+		return "sha1"
+	case 64:
+		return "sha256"
+	case 128:
+		return "sha512"
+	default:
+		return ""
+	}
+}
+
+func isAssetSuitableForSystem(asset asset, name string) bool {
+	return strings.HasPrefix(asset.ContentType, "application") &&
+		(strings.Contains(name, strings.ToLower(osName)) ||
+			osName == "darwin" && stringInSlice(name, macName)) &&
+		((arch == "amd64" && stringInSlice(name, x64arch)) ||
+			(arch == "386" && stringInSlice(name, x32arch)) ||
+			(arch == "arm64" && strings.Contains(name, "arm64")))
+}
+
+func downloadAndProcessAsset(asset asset, dest string) error {
+	log.Printf("download URL: %s (%s)\n", asset.BrowserDownloadURL, byteHumanize(asset.Size))
+	resp, err := http.Get(asset.BrowserDownloadURL)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("bad status: %s", resp.Status)
+	}
+
+	hashSrc, hashFound := hashMap[asset.Name]
+
+	reader := io.TeeReader(resp.Body, &writeProgress{startTime: time.Now(), total: asset.Size})
+	var hashReader hash.Hash
+	if hashFound {
+		hashReader = createHashReader(hashSrc.Type)
 		if hashReader != nil {
-			checkResult := fmt.Sprintf("checksum of a %s file: ", asset.Name)
-			if hashSrc.Hash == hex.EncodeToString(hashReader.Sum(nil)) {
-				checkResult += "OK"
-			} else {
-				checkResult += "FAIL"
-			}
-			log.Println(checkResult)
+			reader = io.TeeReader(reader, hashReader)
 		}
 	}
 
-	fmt.Fprintf(os.Stderr, "%s", clearLine)
+	if err := processDownloadedAsset(asset, reader, dest); err != nil {
+		return err
+	}
+
+	if hashReader != nil {
+		verifyChecksum(asset.Name, hashSrc.Hash, hashReader)
+	}
+
+	return nil
+}
+
+func createHashReader(hashType string) hash.Hash {
+	switch hashType {
+	case "md5":
+		return md5.New()
+	case "sha1":
+		return sha1.New()
+	case "sha256":
+		return sha256.New()
+	case "sha512":
+		return sha512.New()
+	default:
+		log.Printf("unknown hash type: %s\n", hashType)
+		return nil
+	}
+}
+
+func processDownloadedAsset(asset asset, reader io.Reader, dest string) error {
+	switch {
+	case (strings.HasSuffix(asset.ContentType, "bzip2") || strings.HasSuffix(asset.Name, ".bz2")) &&
+		!strings.HasSuffix(asset.Name, "tar.bz2"):
+		return unbzip2(reader, filepath.Join(dest, strings.TrimSuffix(asset.Name, ".bz2")))
+	case (strings.HasSuffix(asset.ContentType, "gzip") || strings.HasSuffix(asset.Name, ".gz")) &&
+		!strings.HasSuffix(asset.Name, "tar.gz"):
+		return ungzip(reader, filepath.Join(dest, strings.TrimSuffix(asset.Name, ".gz")))
+	case strings.HasSuffix(asset.Name, "tgz") || strings.HasSuffix(asset.Name, "tar.gz") ||
+		strings.HasSuffix(asset.Name, "tar.bz2"):
+		return untar(reader, filepath.Ext(asset.Name), dest)
+	case strings.HasSuffix(asset.ContentType, "zip") || strings.HasSuffix(asset.Name, "zip"):
+		return unzip(reader, dest)
+	default:
+		log.Printf("unknown content type: %s, try to just download", asset.ContentType)
+		return saveFile(filepath.Join(dest, asset.Name), os.FileMode(0755), reader)
+	}
+}
+
+func verifyChecksum(name, expectedHash string, hashReader hash.Hash) {
+	checkResult := fmt.Sprintf("checksum of a %s file: ", name)
+	if expectedHash == hex.EncodeToString(hashReader.Sum(nil)) {
+		checkResult += "OK"
+	} else {
+		checkResult += "FAIL"
+	}
+	log.Println(checkResult)
 }
 
 func byteHumanize(b int64) string {
