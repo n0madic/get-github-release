@@ -6,7 +6,7 @@ Utility downloads and unpacks the latest binary release from GitHub
 
 From source:
 
-`go get -u https://github.com/n0madic/get-github-release`
+`go install github.com/n0madic/get-github-release@latest`
 
 ## Help
 
